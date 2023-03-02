@@ -17,6 +17,7 @@ dependencies:
   eventsource: ^0.4.0
   flutter_markdown: ^0.6.14
   url_launcher: ^6.1.10
+  shared_preferences: ^2.0.18
 
 dev_dependencies:
   flutter_test:
