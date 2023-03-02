@@ -72,7 +72,7 @@ class ChatBotApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ChatBot',
+      title: 'ChatGPT@Home',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.light(useMaterial3: material3),
       darkTheme: ThemeData.dark(useMaterial3: material3),

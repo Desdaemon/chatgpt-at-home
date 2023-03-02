@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.totally_not_gpt">
+    package="com.example.chatgpt_at_home">
    <application
-        android:label="totally_not_gpt"
+        android:label="ChatGPT@Home"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
