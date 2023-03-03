@@ -7,25 +7,47 @@ import 'searchable_list_view.dart';
 import 'package:eventsource/eventsource.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() => runApp(const ChatBotApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    final sp = await SharedPreferences.getInstance();
+    apiKey = sp.getString(apiKeyId) ?? const String.fromEnvironment(apiKeyId);
+  } catch (err, st) {
+    debugPrint('failed to retrieve API key: $err');
+    debugPrint('Stack trace: $st');
+  }
+  runApp(const ChatBotApp());
+}
 
-const apiKey = String.fromEnvironment('openaiApiKey');
+Future<SharedPreferences> get sp => SharedPreferences.getInstance();
+
+var apiKey = '';
+const apiKeyId = 'openaiApiKey';
 const material3 = bool.fromEnvironment('material3', defaultValue: true);
 const user = 'chatgpt@home';
 const done = '[DONE]';
-
-final requestHeaders = <String, String>{
-  'content-type': 'application/json',
-  'authorization': 'Bearer $apiKey'
-};
+Map<String, String> get requestHeaders =>
+    {'content-type': 'application/json', 'authorization': 'Bearer $apiKey'};
 
 final completionEndpoint = Uri.https('api.openai.com', '/v1/chat/completions');
+
+void openLinks(String _, String? href, String title) async {
+  if (href != null) {
+    await launchUrl(
+      Uri.parse(href),
+      webOnlyWindowName: title,
+      mode: LaunchMode.externalApplication,
+    );
+  }
+}
 
 /// see [docs](https://platform.openai.com/docs/api-reference/chat/create)
 Stream<String> chat(
   List<ChatMessage> messages, {
   String model = 'gpt-3.5-turbo',
+  void Function(dynamic)? onError,
 }) async* {
   final request = jsonEncode({
     'model': model,
@@ -33,10 +55,8 @@ Stream<String> chat(
     'user': user,
     'messages': [
       for (final message in messages)
-        {
-          'role': message.isUserMessage ? 'user' : 'assistant',
-          'content': message.text
-        }
+        if (message.role != Role.system)
+          {'role': message.role.api, 'content': message.text}
     ]
   });
   final events = await EventSource.connect(
@@ -48,9 +68,10 @@ Stream<String> chat(
     if (error is EventSourceSubscriptionException) {
       debugPrint('failed to chat: ${error.message}');
     }
+    onError?.call(error);
+
     throw error;
   });
-  // final buffer = StringBuffer();
   var role = 'assistant';
   await for (final event in events) {
     if (event.data == done) break;
@@ -172,50 +193,57 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(title: const Text('ChatGPT@Home'), actions: [
+      appBar: AppBar(title: const Text('ChatGPT@Home'), actions: [
+        if (locales.isNotEmpty)
           IconButton(
-            icon: const Icon(Icons.cleaning_services),
-            onPressed: _onClearMessages,
+            icon: const Icon(Icons.language),
+            onPressed: _onSelectLanguage,
           ),
-          if (locales.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.language),
-              onPressed: _onSelectLanguage,
-            )
-        ]),
-        body: Column(children: [
-          Flexible(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: CustomScrollView(
-                reverse: true,
-                slivers: [
-                  if (interim != null)
-                    SliverToBoxAdapter(
-                      child: ChatMessage(
-                        text: interim!,
-                        isUserMessage: false,
-                      ),
-                    ),
-                  SliverList(
-                    delegate: SliverChildBuilderDelegate(
-                      (_, index) => _messages[_messages.length - index - 1],
-                      childCount: _messages.length,
+        IconButton(
+          icon: const Icon(Icons.cleaning_services),
+          onPressed: _onClearMessages,
+        ),
+        IconButton(
+          icon: const Icon(Icons.settings),
+          onPressed: _onOpenSettings,
+        )
+      ]),
+      body: Column(children: [
+        Flexible(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: CustomScrollView(
+              reverse: true,
+              slivers: [
+                if (interim != null)
+                  SliverToBoxAdapter(
+                    child: ChatMessage(
+                      text: interim!,
+                      role: Role.assistant,
                     ),
                   ),
-                ],
-              ),
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (_, index) => _messages[_messages.length - index - 1],
+                    childCount: _messages.length,
+                  ),
+                ),
+              ],
             ),
           ),
-          const Divider(height: 1.0),
-          Container(
-            decoration: BoxDecoration(color: Theme.of(context).cardColor),
-            child: Builder(builder: _buildTextComposer),
-          ),
-        ]));
+        ),
+        const Divider(height: 1.0),
+        Container(
+          decoration: BoxDecoration(color: Theme.of(context).cardColor),
+          child: Builder(builder: _buildTextComposer),
+        ),
+      ]),
+    );
   }
 
   Widget _buildTextComposer(BuildContext context) {
+    final hasApiKey = apiKey.isNotEmpty;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8.0),
       child: Row(
@@ -258,7 +286,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       ctl.close();
                       addMessage(ChatMessage(
                         text: result.recognizedWords,
-                        isUserMessage: true,
+                        role: Role.user,
                       ));
                       return;
                     }
@@ -274,14 +302,16 @@ class _ChatScreenState extends State<ChatScreen> {
             child: TextField(
               controller: _textController,
               onSubmitted: _handleSubmitted,
-              decoration: const InputDecoration.collapsed(
-                hintText: 'Ask me anything',
+              decoration: InputDecoration.collapsed(
+                hintText: hasApiKey ? 'Ask me anything' : 'No API key set',
               ),
             ),
           ),
           IconButton(
             icon: const Icon(Icons.send),
-            onPressed: () => _handleSubmitted(_textController.text),
+            onPressed: !hasApiKey
+                ? null
+                : () => _handleSubmitted(_textController.text),
           ),
         ],
       ),
@@ -292,7 +322,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.clear();
     addMessage(ChatMessage(
       text: text,
-      isUserMessage: true,
+      role: Role.user,
     ));
   }
 
@@ -304,14 +334,29 @@ class _ChatScreenState extends State<ChatScreen> {
       interim = '';
     });
 
-    await for (final delta in chat(_messages)) {
+    void onError(err) {
+      var message = err.toString();
+      if (err is EventSourceSubscriptionException) {
+        message = jsonDecode(err.message)['error']['message'];
+      }
+
+      setState(() {
+        interim = null;
+        _messages.add(ChatMessage(
+          text: message,
+          role: Role.system,
+        ));
+      });
+    }
+
+    await for (final delta in chat(_messages, onError: onError)) {
       setState(() {
         interim = interim! + delta;
       });
     }
 
     setState(() {
-      _messages.add(ChatMessage(text: interim!, isUserMessage: false));
+      _messages.add(ChatMessage(text: interim!, role: Role.assistant));
       interim = null;
     });
   }
@@ -321,56 +366,112 @@ class _ChatScreenState extends State<ChatScreen> {
       _messages.clear();
     });
   }
+
+  void _onOpenSettings() async {
+    await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        String newApiKey = apiKey;
+
+        return AlertDialog(
+          title: const Text('Set API Key'),
+          content: TextFormField(
+            initialValue: newApiKey,
+            obscureText: true,
+            decoration: const InputDecoration(hintText: 'Enter your API key'),
+            onChanged: (value) => newApiKey = value,
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('Cancel'),
+              onPressed: () {
+                Navigator.pop(context);
+              },
+            ),
+            TextButton(
+              child: const Text('Save'),
+              onPressed: () async {
+                await (await sp).setString(apiKeyId, apiKey = newApiKey);
+                setState(() {
+                  if (mounted) Navigator.pop(context);
+                });
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+enum Role {
+  user('user'),
+  assistant('assistant'),
+  system('system');
+
+  final String api;
+  const Role(this.api);
 }
 
 class ChatMessage extends StatelessWidget {
   const ChatMessage({
     super.key,
     required this.text,
-    required this.isUserMessage,
+    required this.role,
   });
 
   final String text;
-  final bool isUserMessage;
+  final Role role;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    Widget body = MarkdownBody(
+      data: text,
+      selectable: true,
+      onTapLink: openLinks,
+      styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+        blockquote: theme.textTheme.bodyMedium!.copyWith(
+          color: theme.colorScheme.onSurface,
+        ),
+        blockquoteDecoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          border: Border.all(
+            color: theme.colorScheme.secondaryContainer,
+          ),
+        ),
+      ),
+    );
+    final isUserMessage = role == Role.user;
+    if (role == Role.system) {
+      body = ListTile(
+        leading: const Icon(Icons.warning),
+        tileColor: theme.colorScheme.errorContainer,
+        title: body,
+      );
+    }
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 10.0),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Container(
-            margin: const EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(
-              child: Text(isUserMessage ? 'U' : 'C'),
+          if (role != Role.system)
+            Container(
+              margin: const EdgeInsets.only(right: 16.0),
+              child: CircleAvatar(
+                child: Text(isUserMessage ? 'U' : 'C'),
+              ),
             ),
-          ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text(
-                  isUserMessage ? 'You' : 'ChatGPT',
-                  style: Theme.of(context).textTheme.titleSmall,
-                ),
-                Container(
-                  margin: const EdgeInsets.only(top: 5.0),
-                  child: MarkdownBody(
-                    data: text,
-                    selectable: true,
-                    styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)),
-                    onTapLink: (_, href, title) async {
-                      if (href != null) {
-                        await launchUrl(
-                          Uri.parse(href),
-                          webOnlyWindowName: title,
-                          mode: LaunchMode.externalApplication,
-                        );
-                      }
-                    },
+                if (role != Role.system)
+                  Text(
+                    isUserMessage ? 'You' : 'ChatGPT',
+                    style: Theme.of(context).textTheme.titleSmall,
                   ),
-                ),
+                Container(margin: const EdgeInsets.only(top: 5.0), child: body),
               ],
             ),
           ),

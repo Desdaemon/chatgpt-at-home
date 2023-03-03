@@ -9,12 +9,13 @@ Yet another ChatGPT clone in Flutter, now for the phones. (WIP)
 
 <img src="site/main_screen.png" width="300" alt="Main screen" />
 
-## :hammer: Building
+## Prepopulating the API key
 
-### From source
-
-Fill out your config file from `define.json.template`, then invoke `flutter run`:
+By default, the app will request the user to input an OpenAI API key. However, you can prepopulate it by
+filling out `define.json.template` and pass it to Flutter commands:
 
 ```shell
 flutter run --dart-define-from-file define.json
 ```
+
+Please note that this is not secure and will store your API key in plain text within the app's binary.
